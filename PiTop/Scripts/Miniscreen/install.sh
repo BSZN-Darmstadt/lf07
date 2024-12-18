@@ -225,6 +225,11 @@ if [[ "$(uname)" != "Darwin" ]]; then
 if curl -I https://registry.npmjs.org/@node-red/util  >/dev/null 2>&1; then
 echo -e '\033]2;'$NODERED_USER@`hostname`:  Node-RED update'\007'
 echo " "
+echo "******************************************"
+echo "*      Node-RED Installer by BSZN       *"
+echo "*           Version 1.0.0               *"
+echo "******************************************"
+echo " "
 echo "This script checks the version of node.js installed is 16 or greater. It will try to"
 echo "install node 20 if none is found. It can optionally install node 18 or 20 LTS for you."
 echo " "
@@ -234,6 +239,9 @@ echo " "
 echo "It also tries to run 'npm rebuild' to refresh any extra nodes you have installed"
 echo "that may have a native binary component. While this normally works ok, you need"
 echo "to check that it succeeds for your combination of installed nodes."
+echo " "
+echo "Note: PT-Miniscreen will be automatically re-enabled at the end of the process"
+echo "      to ensure your display continues to work properly."
 echo " "
 echo "To do all this it runs commands as root - please satisfy yourself that this will"
 echo "not damage your Pi, or otherwise compromise your configuration."
@@ -339,6 +347,8 @@ case $yn in
         echo -ne '  Install extra Pi nodes              \r\n'
         echo -ne '  Add shortcut commands               \r\n'
         echo -ne '  Update systemd script               \r\n'
+        echo -ne '  Mark PT dependencies               \r\n'
+        echo -ne '  Re-enable PT-Miniscreen            \r\n'
         echo -ne '                                      \r\n'
         echo -ne '\r\nAny errors will be logged to   /var/log/nodered-install.log\r\n'
         echo -ne '\033[14A'
@@ -848,3 +858,20 @@ echo " "
 exit 1
 fi
 fi
+
+# Vor dem apt remove/autoremove
+echo -ne "  Marking PT dependencies               \r"
+$SUDO apt-mark manual pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+if [ $? -eq 0 ]; then CHAR=$TICK; else CHAR=$CROSS; fi
+echo -ne "  Marking PT dependencies               $CHAR\r\n"
+
+# Am Ende des Skripts
+echo -ne '  Re-enabling PT-Miniscreen            \r'
+if $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+   $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+   $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
+    CHAR=$TICK
+else
+    CHAR=$CROSS
+fi
+echo -ne "  Re-enabling PT-Miniscreen            $CHAR\r\n"
