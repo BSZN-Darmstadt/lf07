@@ -315,17 +315,13 @@ case $yn in
         if [[ "$nv" -lt 18 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
             if [[ "$NODE_VERSION" == "" ]]; then
                 echo "Nodejs $nv too old and new version not specified - exiting" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                echo "Node-RED v3.x no longer supports Nodejs $nv "
-                # echo "  Node-RED v2 no longer supports Nodejs $nv.  Please update."
-                # echo "  "
-                # echo "  You can use the old v1 branch by specifying --nodered-version=1.*"
-                echo "  "
+                echo "Node-RED v3.x requires Nodejs 18 or later"
                 echo "  You can force an install of node 18 or 20 by adding --node18 or --node20 to the end of the command line above."
                 echo "  However doing so may break some nodes that may need re-installing manually."
                 echo "  Generally it is recommended to update all nodes to their latest versions before upgrading."
-                echo "  "
-                echo "  If you wish to stay on nodejs $nv you can update to the latest Node-RED 1.x or 2.x version by adding"
-                echo '  --nodered-version="1.3.7" or --nodered-version="2.2.2" to that install command. If in doubt this is the safer option.'
+                echo ""
+                echo "  If you wish to stay on nodejs $nv you can update to the latest Node-RED 2.x version by adding"
+                echo '  --nodered-version="2.2.2" to that install command. If in doubt this is the safer option.'
                 if [[ "$npv" != "" ]]; then
                     echo "Checking for outdated nodes in $PWD"
                     npm --silent outdated
@@ -539,7 +535,7 @@ case $yn in
         if [[ "$rc" == "" ]]; then
             echo -ne "   $nov   Npm $npv\r\n"
         else
-            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
+            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
             exit 2
         fi
         if [ "$EUID" == "0" ]; then npm config set unsafe-perm true &>/dev/null; fi
