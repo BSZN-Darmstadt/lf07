@@ -428,7 +428,6 @@ case $yn in
                         $SUDO chown -R 0:0 /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                         if $SUDO cp -PR /tmp/nodejs/* /usr/ 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
                         $SUDO rm -rf /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                        # if $SUDO tar -zxof /tmp/node.tgz --strip-components=1 -C /usr 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
                     fi
                     rm /tmp/node.tgz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     echo -ne "  Install Node.js for i686            $CHAR"
@@ -517,7 +516,7 @@ case $yn in
         if [[ "$rc" == "" ]]; then
             echo -ne "   $nov   Npm $npv\r\n"
         else
-            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
+            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
             exit 2
         fi
         if [ "$EUID" == "0" ]; then npm config set unsafe-perm true &>/dev/null; fi
