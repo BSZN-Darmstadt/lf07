@@ -314,29 +314,11 @@ case $yn in
 
         if [[ "$nv" -lt 18 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
             if [[ "$NODE_VERSION" == "" ]]; then
-                echo "Nodejs $nv too old and new version not specified - exiting" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                echo "Node-RED v3.x requires Nodejs 18 or later"
-                echo "  You can force an install of node 18 or 20 by adding --node18 or --node20 to the end of the command line above."
-                echo "  However doing so may break some nodes that may need re-installing manually."
-                echo "  Generally it is recommended to update all nodes to their latest versions before upgrading."
-                echo ""
-                echo "  If you wish to stay on nodejs $nv you can update to the latest Node-RED 2.x version by adding"
-                echo '  --nodered-version="2.2.2" to that install command. If in doubt this is the safer option.'
-                if [[ "$npv" != "" ]]; then
-                    echo "Checking for outdated nodes in $PWD"
-                    npm --silent outdated
-                    echo "  "
-                fi
-                echo "  Please backup your installation and flows before upgrading."
-                echo "  "
-                if ! $SUDO grep -q Raspberry /proc/cpuinfo; then
-                    echo "  Note: not all embedded hardware can be updated via this method - please check before proceeding."
-                    echo "  "
-                fi
-                echo "  Exiting now."
-                exit 2
+                echo "Detected Node.js $nv - updating to Node.js 20 LTS" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                NODE_VERSION="20"
+                # Statt Beendigung fortfahren mit Node.js 20
+                echo -ne "  Installing Node.js 20 LTS            \r"
             fi
-            echo "Installing nodejs "$NODE_VERSION" over "$nv" ." | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
         fi
 
         time1=$(date)
