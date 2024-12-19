@@ -867,7 +867,7 @@ echo -ne "  Marking PT dependencies               $CHAR\r\n"
 
 # Am Ende des Skripts
 echo -ne '  Re-enabling PT-Miniscreen            \r'
-if $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+if $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
     CHAR=$TICK
