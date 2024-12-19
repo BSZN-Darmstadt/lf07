@@ -878,7 +878,15 @@ fi
 echo -ne "  Re-enabling PT-Miniscreen            $CHAR\r\n"
 
 echo -ne '  Installing PT device support          \r'
-if $SUDO apt install -y pt-device-support 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+if $SUDO apt install -y pt-device-support \
+   pt-os \
+   pt-os-desktop \
+   pt-os-ui-mods \
+   pt-os-web-portal \
+   pt-os-web-portal-desktop \
+   pt-os-icon-theme \
+   python3-pitop-full \
+   2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
