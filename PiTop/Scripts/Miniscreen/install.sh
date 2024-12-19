@@ -349,6 +349,7 @@ case $yn in
         echo -ne '  Update systemd script               \r\n'
         echo -ne '  Mark PT dependencies               \r\n'
         echo -ne '  Re-enable PT-Miniscreen            \r\n'
+        echo -ne '  Installing PT device support          \r\n'
         echo -ne '                                      \r\n'
         echo -ne '\r\nAny errors will be logged to   /var/log/nodered-install.log\r\n'
         echo -ne '\033[14A'
@@ -875,3 +876,14 @@ else
     CHAR=$CROSS
 fi
 echo -ne "  Re-enabling PT-Miniscreen            $CHAR\r\n"
+
+echo -ne '  Installing PT device support          \r'
+if $SUDO apt install -y pt-device-support 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+   $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+   $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
+   $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
+    CHAR=$TICK
+else
+    CHAR=$CROSS
+fi
+echo -ne "  Installing PT device support          $CHAR\r\n"
