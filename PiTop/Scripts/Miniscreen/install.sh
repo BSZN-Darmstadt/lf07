@@ -878,6 +878,23 @@ fi
 echo -ne "  Re-enabling PT-Miniscreen            $CHAR\r\n"
 
 echo -ne '  Installing PT device support          \r'
+spinner=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
+spin() {
+    while true; do
+        for i in "${spinner[@]}"; do
+            echo -ne "\r  Installing PT device support    $i "
+            sleep 0.2
+        done
+    done
+}
+
+# Start the spinner in background
+spin &
+SPIN_PID=$!
+
+# Trap Ctrl+C and kill the spinner
+trap "kill -9 $SPIN_PID" $(seq 0 15)
+
 if $SUDO apt install -y pt-device-support \
    pt-os \
    pt-os-desktop \
@@ -886,6 +903,8 @@ if $SUDO apt install -y pt-device-support \
    pt-os-web-portal-desktop \
    pt-os-icon-theme \
    python3-pitop-full \
+   pi-top-usb-setup \
+   pt-os-user-libs \
    2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
    $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
@@ -894,4 +913,8 @@ if $SUDO apt install -y pt-device-support \
 else
     CHAR=$CROSS
 fi
-echo -ne "  Installing PT device support          $CHAR\r\n"
+
+# Kill the spinner
+kill -9 $SPIN_PID 2>/dev/null
+
+echo -ne "\r  Installing PT device support          $CHAR\r\n"
