@@ -893,7 +893,7 @@ spin &
 SPIN_PID=$!
 
 # Trap Ctrl+C and kill the spinner
-trap "kill -9 $SPIN_PID" $(seq 0 15)
+trap 'kill -9 $SPIN_PID 2>/dev/null || true' $(seq 0 15)
 
 if $SUDO apt install -y pt-device-support \
    pt-os \
@@ -914,7 +914,7 @@ else
     CHAR=$CROSS
 fi
 
-# Kill the spinner
-kill -9 $SPIN_PID 2>/dev/null
+# Kill the spinner - ignore errors if process is already gone
+kill -9 $SPIN_PID 2>/dev/null || true
 
 echo -ne "\r  Installing PT device support          $CHAR\r\n"
