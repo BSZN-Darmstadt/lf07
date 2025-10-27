@@ -265,7 +265,7 @@ case $yn in
         response="${CONFIRM_PI}"
         [ ! "${response}" ] && read -r -t 15 -p "Would you like to install the Pi-specific nodes ? [y/N] ? " response
         if [[ "$response" =~ ^([yY])+$ ]]; then
-            EXTRANODES="node-red-node-pi-gpio@latest node-red-node-random@latest node-red-node-ping@latest node-red-contrib-play-audio@latest node-red-node-smooth@latest node-red-node-serialport@latest node-red-contrib-buffer-parser@latest"
+            EXTRANODES="node-red-node-pi-gpio@latest node-red-node-random@latest node-red-node-ping@latest node-red-contrib-play-audio@latest node-red-node-smooth@latest node-red-node-serialport@latest node-red-contrib-buffer-parser@latest node-red-contrib-boolean-logic-ultimate@latest node-red-contrib-i2c@latest node-red-contrib-python3-function@latest node-red-dashboard@latest node-red-contrib-aedes@latest node-red-contrib-key-value-store@latest"
             EXTRAW="install"
         fi
 
