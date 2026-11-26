@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright 2016,2024 JS Foundation and other contributors, https://js.foundation/
+# Copyright 2016,2026 JS Foundation and other contributors, https://js.foundation/
 # Copyright 2015,2016 IBM Corp.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Node-RED Installer for DEB based systems
+# Node-RED Installer for Debian based systems
 
 umask 0022
 tgta12=12.22.12  # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
@@ -24,10 +24,14 @@ tgta14=14.21.3   # need armv6l latest from https://unofficial-builds.nodejs.org/
 tgtl14=14.21.3   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
 tgta16=16.20.2   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
 tgtl16=16.20.2   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
-tgta18=18.20.4   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
-tgtl18=18.20.4   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
-tgta20=20.18.0   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
-tgtl20=20.18.0   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
+tgta18=18.20.8   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
+tgtl18=18.20.8   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
+tgta20=20.20.2   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
+tgtl20=20.20.2   # need x86 latest from https://unofficial-builds.nodejs.org/download/release/
+tgta22=22.22.3   # need armv6l latest from https://unofficial-builds.nodejs.org/download/release/
+tgtl22=None
+tgta24=None
+tgtl24=None
 
 usage() {
   cat << EOL
@@ -43,12 +47,13 @@ Options:
   --allow-low-ports add capability to bind to ports below 1024 (default is disallow)
   --update-nodes    run npm update on existing installed nodes (within scope of package.json)
   --no-init         don't ask to initialise settings if they don't exist
+  --on-diet         bypass DietPi exit and force install Node-RED on DietPi
   --nodered-user    specify the user to run as, useful for installing as sudo - e.g. --nodered-user=pi
   --nodered-version if not set, the latest version is used - e.g. --nodered-version="4.0.2"
-  --node16          if set, forces install of major version of nodejs 16 LTS
-  --node18          if set, forces install of major version of nodejs 18 LTS
   --node20          if set, forces install of major version of nodejs 20 LTS
-                    if none set, install nodejs 20 LTS if nodejs version is less than 18,
+  --node22          if set, forces install of major version of nodejs 22 LTS
+  --node24          if set, forces install of major version of nodejs 24 LTS
+                    if none set, install nodejs 22 LTS if nodejs version is less than 20,
                     otherwise leave current install
 
 Note: if you use allow-low-ports it may affect the node modules paths - see https://stackoverflow.com/a/65560687
@@ -56,6 +61,121 @@ EOL
 }
 
 SUDO=sudo
+
+# ---------------------------------------------------------------------------
+# BSZN pi-top Anpassungen
+# Der offizielle Installer entfernt nodejs/npm per apt, ruft "apt autoremove"
+# auf und ersetzt auf Bookworm python3-rpi.gpio durch python3-rpi-lgpio.
+# Auf pi-top OS kann das Pakete des pi-top Stacks (pt-miniscreen, pi-topd, ...)
+# mit entfernen. Deshalb werden die pi-top Pakete vorher als "manuell"
+# markiert und am Ende (auch bei Abbruch) wiederhergestellt und neu gestartet.
+# ---------------------------------------------------------------------------
+PT_LOG=/var/log/nodered-install.log
+PT_CORE_PKGS="pi-topd pt-miniscreen pt-touchscreen pt-os-web-portal pt-os-web-portal-desktop further-link pt-web-vnc python3-pitop python3-pitop-core python3-pitop-display python3-pitop-miniscreen python3-pitop-cli"
+PT_FULL_PKGS="pt-device-support pt-os pt-os-desktop pt-os-ui-mods pt-os-web-portal pt-os-web-portal-desktop pt-os-icon-theme python3-pitop-full pi-top-usb-setup pt-os-user-libs"
+PT_SERVICES="pi-topd pt-miniscreen pt-os-web-portal further-link"
+PT_PORTAL_STATE=/var/lib/pt-os-web-portal/state.cfg
+PT_PORTAL_BACKUP=/tmp/pt-os-web-portal-state.cfg
+PT_KEEP_FILE=/tmp/pt-installed-packages.txt
+PT_ACTIVE="false"
+
+is_pitop() {
+    dpkg-query -W -f='${Status}' pi-topd 2>/dev/null | grep -q "install ok installed"
+}
+
+# alle installierten pi-top Pakete merken und gegen autoremove schuetzen
+pt_protect() {
+    is_pitop || return 0
+    dpkg-query -W -f='${Package} ${Status}\n' 'pt-*' 'pi-top*' 'python3-pitop*' 'further-link' 2>/dev/null \
+        | awk '$NF=="installed"{print $1}' > "$PT_KEEP_FILE"
+    if [ -s "$PT_KEEP_FILE" ]; then
+        $SUDO apt-mark manual $(cat "$PT_KEEP_FILE") 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null
+    fi
+    # Onboarding-Status des Web-Portals sichern
+    if [ -f "$PT_PORTAL_STATE" ]; then
+        $SUDO cp -p "$PT_PORTAL_STATE" "$PT_PORTAL_BACKUP" 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null
+    fi
+    PT_ACTIVE="true"
+    trap pt_restore EXIT
+}
+
+# nur Pakete zurueckgeben, die im Repo existieren
+pt_available() {
+    local p out=""
+    for p in "$@"; do
+        apt-cache show "$p" >/dev/null 2>&1 && out="$out $p"
+    done
+    echo "$out"
+}
+
+pt_restore() {
+    [ "$PT_ACTIVE" == "true" ] || return 0
+    PT_ACTIVE="false"
+    local TICK='\033[1;32m✔\033[0m' CROSS='\033[1;31m✘\033[0m' CHAR missing p
+    echo " "
+    echo "pi-top: restore packages and services" | $SUDO tee -a $PT_LOG >>/dev/null
+    echo -ne "  pi-top: Pakete pruefen/wiederherstellen   \r"
+    # alles was vorher installiert war und jetzt fehlt
+    missing=""
+    if [ -s "$PT_KEEP_FILE" ]; then
+        for p in $(cat "$PT_KEEP_FILE"); do
+            dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || missing="$missing $p"
+        done
+    fi
+    CHAR=$TICK
+    if [ -n "$missing" ]; then
+        echo "pi-top: missing after install:$missing" | $SUDO tee -a $PT_LOG >>/dev/null
+        $SUDO apt-get install -y $(pt_available $missing) 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null || CHAR=$CROSS
+    fi
+    # Basispakete reinstallieren, Komplettpaket nachziehen falls noetig
+    $SUDO apt-get install -y --reinstall $(pt_available $PT_CORE_PKGS) 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null || CHAR=$CROSS
+    $SUDO apt-get install -y $(pt_available $PT_FULL_PKGS) 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null || CHAR=$CROSS
+    # Onboarding-Status zuruecksichern (sonst startet ggf. das Onboarding erneut)
+    if [ -f "$PT_PORTAL_BACKUP" ]; then
+        $SUDO mkdir -p "$(dirname "$PT_PORTAL_STATE")"
+        $SUDO cp -p "$PT_PORTAL_BACKUP" "$PT_PORTAL_STATE" 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null
+        $SUDO rm -f "$PT_PORTAL_BACKUP"
+    fi
+    echo -ne "  pi-top: Pakete pruefen/wiederherstellen   $CHAR\r\n"
+
+    echo -ne "  pi-top: Dienste (re)starten               \r"
+    CHAR=$TICK
+    $SUDO systemctl daemon-reload 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null
+    for p in $PT_SERVICES; do
+        if systemctl cat "$p.service" >/dev/null 2>&1; then
+            $SUDO systemctl enable "$p" 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null
+            $SUDO systemctl restart "$p" 2>&1 | $SUDO tee -a $PT_LOG >>/dev/null || CHAR=$CROSS
+        fi
+    done
+    sleep 3
+    systemctl is-active --quiet pt-miniscreen || CHAR=$CROSS
+    systemctl is-active --quiet pi-topd || CHAR=$CROSS
+    echo -ne "  pi-top: Dienste (re)starten               $CHAR\r\n"
+
+    # Web-Portal (Onboarding-Webserver, Port 80) pruefen
+    if systemctl cat pt-os-web-portal.service >/dev/null 2>&1; then
+        local WP=$CROSS PORTUSER
+        for p in 1 2 3 4 5 6 7 8 9 10; do
+            if systemctl is-active --quiet pt-os-web-portal && curl -s -o /dev/null --max-time 3 http://127.0.0.1/; then WP=$TICK; break; fi
+            sleep 2
+        done
+        echo -ne "  pi-top: Web-Portal auf Port 80            $WP\r\n"
+        if [ "$WP" != "$TICK" ]; then
+            PORTUSER=$($SUDO ss -ltnpH 'sport = :80' 2>/dev/null | grep -o 'users:(([^)]*))' | grep -v pt-os-web-portal)
+            if [ -n "$PORTUSER" ]; then
+                echo "  pi-top: Port 80 ist belegt durch: $PORTUSER"
+                echo "          Das Web-Portal braucht Port 80 - diesen Dienst bitte auf einen anderen Port legen."
+            fi
+            echo "pi-top: web portal not reachable, port 80: $PORTUSER" | $SUDO tee -a $PT_LOG >>/dev/null
+        fi
+    fi
+    if [ "$CHAR" != "$TICK" ]; then
+        echo "  pi-top: Bitte $PT_LOG pruefen bzw. den Pi neu starten (sudo reboot)."
+    fi
+    rm -f "$PT_KEEP_FILE"
+    echo " "
+}
+# ---------------------------------------------------------------------------
 SUDOE="sudo -E"
 NODE_VERSION=""
 LOW_PORTS="n"
@@ -107,6 +227,10 @@ if [ $# -gt 0 ]; then
         NODE_VERSION="22"
         shift
         ;;
+      --node24)
+        NODE_VERSION="24"
+        shift
+        ;;
       --restart)
         RESTART="y"
         shift
@@ -129,6 +253,10 @@ if [ $# -gt 0 ]; then
         ;;
       --no-init)
         INITSET="n"
+        shift
+        ;;
+      --on-diet)
+        ONDIET="y"
         shift
         ;;
       --) # end argument parsing
@@ -166,10 +294,11 @@ else
 fi
 
 echo -ne "\033[2 q"
-if [[ -e /mnt/dietpi_userdata ]]; then
-    echo -ne "\n\033[1;32mDiet-Pi\033[0m detected - only going to add the  \033[0;36mnode-red-start, -stop, -log\033[0m  commands.\n"
+if [[ -e /mnt/dietpi_userdata && "$ONDIET" != "y" ]]; then
+    echo -ne "\n\033[1;32mDietPi\033[0m detected - only going to add the  \033[0;36mnode-red-start, -stop, -log\033[0m  commands.\n"
     echo -ne "Flow files and other things worth backing up can be found in the \033[0;36m/mnt/dietpi_userdata/node-red\033[0m directory.\n\n"
-    echo -ne "Use the  \033[0;36mdietpi-software\033[0m  command to un-install and re-install \033[38;5;88mNode-RED\033[0m.\n"
+    echo -ne "Use the  \033[0;36mdietpi-software\033[0m  command to un-install and re-install \033[38;5;88mNode-RED\033[0m.\n\n"
+    echo -ne "If you want to force install Node-RED, re-run this script with the \033[0;36m--on-diet\033[0m option.\n\n"
     echo "journalctl -f -n 100 -u node-red -o cat" > /usr/bin/node-red-log
     chmod +x /usr/bin/node-red-log
     echo "systemctl stop node-red" > /usr/bin/node-red-stop
@@ -178,6 +307,27 @@ if [[ -e /mnt/dietpi_userdata ]]; then
     echo "journalctl -f -n 0 -u node-red -o cat" >> /usr/bin/node-red-start
     chmod +x /usr/bin/node-red-start
 else
+
+if [[ -e /mnt/dietpi_userdata && "$ONDIET" == "y" ]]; then
+    DIETPI="y"
+    echo -ne "\n\033[1;32mDietPi\033[0m detected but going to force install of Node-RED.\n"
+    echo -ne "\nThis should only be done if you DO NOT use the dietpi-software\ninstaller to set up nodejs and node-red.\n"
+    echo -ne "\nTrying to mix both will quite probably break something - Use at your own risk.\n\n"
+    read -t 10 -p "Are you really sure you want to force install on DietPi ? (y/N) ? " yn
+    case $yn in
+        [Yy]* )
+        ;;
+        * )
+        echo " "
+        exit 1
+        ;;
+    esac
+    echo -ne "\nOK - fingers crossed.\n\n"
+    apt install -y python3-rpi.gpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+    CONFIRM_ROOT="y"
+    CONFIRM_INSTALL="y"
+    CONFIRM_PI="y"
+fi
 
 if [ "$EUID" == "0" ]; then
 # if [[ $SUDO_USER != "" ]]; then
@@ -190,6 +340,7 @@ if [ "$EUID" == "0" ]; then
   [ ! "${yn}" ] && read -t 10 -p "Are you really sure you want to install as root ? (y/N) ? " yn
   case $yn in
     [Yy]* )
+      NODERED_USER="root"
     ;;
     * )
       echo " "
@@ -223,15 +374,61 @@ SUDOU="sudo -u $NODERED_USER"
 
 if [[ "$(uname)" != "Darwin" ]]; then
 if curl -I https://registry.npmjs.org/@node-red/util  >/dev/null 2>&1; then
-echo -e '\033]2;'$NODERED_USER@`hostname`:  Node-RED update'\007'
+if [[ "$(uname -m)" =~ "i686" ]] || [[ "$(uname -m)" =~ "x86_64" && "$(getconf LONG_BIT)" =~ "32" ]]; then
+    echo " "
+    echo "************************************************************"
+    echo " "
+    if [[ "$NODE_VERSION" == "24" ]]; then
+        echo "  STOP !                                                    "
+        echo "  There are no known Nodejs v24 builds for 32 bit systems.  "
+        echo "                                                            "
+        echo "************************************************************"
+        exit 1
+    fi
+    if [[ "$NODE_VERSION" == "22" ]]; then
+        echo "  STOP !                                                    "
+        echo "  There are no known Nodejs v22 builds for 32 bit systems.  "
+        echo "                                                            "
+        echo "************************************************************"
+        exit 1
+    fi
+elif uname -m | grep -q armv6l ; then
+    echo " "
+    echo "************************************************************"
+    echo " "
+    if [[ "$NODE_VERSION" == "20" ]]; then
+        echo "  Warning :                                                 "
+        echo "     Nodejs v20 goes EOL in April 2026.                     "
+        echo "     Nodejs v22 goes EOL in April 2027.                     "
+        echo "     There is no v24 or later builds for Arm v6 systems.    "
+        echo "                                                            "
+        echo "************************************************************"
+        sleep 10
+    elif [[ "$NODE_VERSION" == "22" ]]; then
+        echo "  Warning :                                                 "
+        echo "     Nodejs v22 goes EOL in April 2027.                     "
+        echo "     There is no v24 or later builds for Arm v6 systems.    "
+        echo "                                                            "
+        echo "************************************************************"
+        sleep 10
+    elif [[ "$NODE_VERSION" == "24" ]]; then
+        echo "  STOP !                                                    "
+        echo "     There are no known Nodejs v24 builds for Arm v6.       "
+        echo "                                                            "
+        echo "************************************************************"
+        exit 1
+    fi
+fi
+echo " "
+echo Node-RED update script for : $NODERED_USER@`hostname`
 echo " "
 echo "******************************************"
-echo "*      Node-RED Installer by BSZN       *"
-echo "*           Version 1.4.0               *"
+echo "*   Node-RED Installer by BSZN (pi-top)  *"
+echo "*            Version 2.1.0               *"
 echo "******************************************"
 echo " "
 echo "This script checks the version of node.js installed is 16 or greater. It will try to"
-echo "install node 20 if none is found. It can optionally install node 18 or 20 LTS for you."
+echo "install node 22 if none is found. It can optionally install node 18, 20 or 24 LTS for you."
 echo " "
 echo "If necessary it will then remove the old core of Node-RED, before then installing the latest"
 echo "version. You can also optionally specify the version required."
@@ -240,8 +437,9 @@ echo "It also tries to run 'npm rebuild' to refresh any extra nodes you have ins
 echo "that may have a native binary component. While this normally works ok, you need"
 echo "to check that it succeeds for your combination of installed nodes."
 echo " "
-echo "Note: PT-Miniscreen will be automatically re-enabled at the end of the process"
-echo "      to ensure your display continues to work properly."
+echo "pi-top: Installed pi-top packages are protected during the install and the"
+echo "        PT-Miniscreen / pi-topd services are restored at the end."
+echo "        This includes the pi-top web portal (onboarding, port 80)."
 echo " "
 echo "To do all this it runs commands as root - please satisfy yourself that this will"
 echo "not damage your Pi, or otherwise compromise your configuration."
@@ -265,7 +463,7 @@ case $yn in
         response="${CONFIRM_PI}"
         [ ! "${response}" ] && read -r -t 15 -p "Would you like to install the Pi-specific nodes ? [y/N] ? " response
         if [[ "$response" =~ ^([yY])+$ ]]; then
-            EXTRANODES="node-red-node-pi-gpio@latest node-red-node-random@latest node-red-node-ping@latest node-red-contrib-play-audio@latest node-red-node-smooth@latest node-red-node-serialport@latest node-red-contrib-buffer-parser@latest node-red-contrib-boolean-logic-ultimate@latest node-red-contrib-i2c@latest node-red-contrib-python3-function@latest node-red-dashboard@latest node-red-contrib-aedes@latest node-red-contrib-key-value-store@latest"
+            EXTRANODES="node-red-node-pi-gpio@latest node-red-node-random@latest node-red-node-ping@latest node-red-contrib-play-audio@latest node-red-node-smooth@latest node-red-node-serialport@latest node-red-contrib-buffer-parser@latest node-red-contrib-boolean-logic-ultimate@latest node-red-contrib-i2c@latest node-red-contrib-python3-function@latest @flowfuse/node-red-dashboard@latest node-red-contrib-aedes@latest node-red-contrib-key-value-store@latest"
             EXTRAW="install"
         fi
 
@@ -283,7 +481,8 @@ case $yn in
 
         nv=0
         # nv2=""
-        nv2=`dpkg -s nodejs 2>/dev/null | grep Version | cut -d ' ' -f 2`
+        # nv2=`dpkg -s nodejs 2>/dev/null | grep Version | cut -d ' ' -f 2`
+        nv2=`node -v 2>/dev/null`
         nrv=`echo $NODERED_VERSION | cut -d "." -f1`
 
         if [[ "$APTOK" == "false" ]]; then
@@ -320,15 +519,15 @@ case $yn in
             NODE_VERSION="12"
         fi
 
-        if [[ "$nv" -lt 18 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
+        if [[ "$nv" -lt 20 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
             if [[ "$NODE_VERSION" == "" ]]; then
-                echo "Detected Node.js $nv - updating to Node.js 20 LTS" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                NODE_VERSION="20"
-                # Statt Beendigung fortfahren mit Node.js 20
-                echo -ne "  Installing Node.js 20 LTS            \r"
+                echo "Detected Node.js $nv - updating to Node.js 22 LTS" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                NODE_VERSION="22"
             fi
+            echo "Installing nodejs "$NODE_VERSION" over "$nv" ." | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
         fi
 
+        pt_protect
         time1=$(date)
         echo "" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
         echo "***************************************" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
@@ -347,9 +546,6 @@ case $yn in
         echo -ne '  Install extra Pi nodes              \r\n'
         echo -ne '  Add shortcut commands               \r\n'
         echo -ne '  Update systemd script               \r\n'
-        echo -ne '  Mark PT dependencies               \r\n'
-        echo -ne '  Re-enable PT-Miniscreen            \r\n'
-        echo -ne '  Installing PT device support          \r\n'
         echo -ne '                                      \r\n'
         echo -ne '\r\nAny errors will be logged to   /var/log/nodered-install.log\r\n'
         echo -ne '\033[14A'
@@ -377,7 +573,7 @@ case $yn in
             echo -ne "  Leave existing Node.js              :"
         elif [[ "$NODE_VERSION" == "" && "$nv" -ne 0 ]]; then
             CHAR="-"
-            echo -ne "  Node option not specified           :   --node18 or --node20\n"
+            echo -ne "  Node option not specified           :   --node20, --node22 or --node24\n"
             echo -ne "  Leave existing Node.js              :"
         else
             if [[ "$NODE_VERSION" == "12" ]]; then
@@ -396,12 +592,15 @@ case $yn in
                 tgtl=$tgtl20
                 tgta=$tgta20
             elif [[ "$NODE_VERSION" == "22" ]]; then
-                tgtl="None"
-                tgta="None"
+                tgtl=$tgtl22
+                tgta=$tgta22
+            elif [[ "$NODE_VERSION" == "24" ]]; then
+                tgtl=$tgtl24
+                tgta=$tgta24
             else
-                tgtl=$tgtl20
-                tgta=$tgta20
-                NODE_VERSION="20"
+                tgtl=$tgtl22
+                tgta=$tgta22
+                NODE_VERSION="22"
             fi
             # maybe remove Node.js - or upgrade if nodesource.list exists
             if [[ -d $NODERED_HOME/.nvm ]]; then
@@ -416,12 +615,13 @@ case $yn in
                 nvm alias default $NODE_VERSION >/dev/null 2>&1
                 echo "Now using --- $(nvm current)" 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 ln -f -s $NODERED_HOME/.nvm/versions/node/$(nvm current)/lib/node_modules/node-red/red.js  $NODERED_HOME/node-red
-                echo -ne "  Update Node.js $NODE_VERSION                   $CHAR"
+                echo -ne "  Update Node.js $NODE_VERSION                   $CHAR - Using nvm is NOT recommended/supported."
             elif [[ $(which n) ]]; then
                 echo "Using n" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 echo -ne "  Using N to manage Node.js           +\r\n"
+                echo -ne '  NOTE: Using n is NOT RECOMMENDED. Please use a standard nodejs install.\r\n'
                 if $SUDO n $NODE_VERSION 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
-                echo -ne "  Update Node.js $NODE_VERSION                   $CHAR"
+                echo -ne "  Update Node.js $NODE_VERSION                   $CHAR - Using n is NOT recommended/supported."
             elif [[ "$(uname -m)" =~ "i686" ]] || [[ "$(uname -m)" =~ "x86_64" && "$(getconf LONG_BIT)" =~ "32" ]]; then
                 echo "Using 32bit nodejs" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 if [[ "$tgtl" != "None" ]]; then
@@ -439,6 +639,7 @@ case $yn in
                         $SUDO chown -R 0:0 /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                         if $SUDO cp -PR /tmp/nodejs/* /usr/ 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
                         $SUDO rm -rf /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                        # if $SUDO tar -zxof /tmp/node.tgz --strip-components=1 -C /usr 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
                     fi
                     rm /tmp/node.tgz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     echo -ne "  Install Node.js for i686            $CHAR"
@@ -453,9 +654,9 @@ case $yn in
                     echo -ne "  Install Node.js for Armv6           \r"
                     # f=$(curl -sL https://nodejs.org/download/release/latest-dubnium/ | grep "armv6l.tar.gz" | cut -d '"' -f 2)
                     # curl -sL -o node.tgz https://nodejs.org/download/release/latest-dubnium/$f 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                    curl -sSL -o /tmp/node.tgz https://unofficial-builds.nodejs.org/download/release/v$tgta/node-v$tgta-linux-armv6l.tar.gz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    curl -sSL -o $NODERED_HOME/node.tgz https://unofficial-builds.nodejs.org/download/release/v$tgta/node-v$tgta-linux-armv6l.tar.gz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     # unpack it into the correct places
-                    hd=$(head -c 6 /tmp/node.tgz)
+                    hd=$(head -c 6 $NODERED_HOME/node.tgz)
                     if [ "$hd" == "<!DOCT" ] || [ "$hd" == "<html>" ]; then
                         CHAR="$CROSS File $f not downloaded";
                     else
@@ -463,25 +664,36 @@ case $yn in
                             $SUDO rm -rf /tmp/nodejs
                         fi
                         mkdir -p /tmp/nodejs
-                        $SUDO tar -zxof /tmp/node.tgz --strip-components=1 -C /tmp/nodejs
+                        $SUDO tar -zxof $NODERED_HOME/node.tgz --strip-components=1 -C /tmp/nodejs
                         $SUDO chown -R 0:0 /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                         if $SUDO cp -PR /tmp/nodejs/* /usr/ 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
                         $SUDO rm -rf /tmp/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     fi
                     # remove the tgz file to save space
-                    rm /tmp/node.tgz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    rm $NODERED_HOME/node.tgz 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     echo -ne "  Install Node.js for Armv6           $CHAR"
                 else
                     echo -ne "  Nodejs "$tgta" for Armv6 does not exist  $CROSS"
+                    echo " "
+                    echo "************************************************************"
+                    echo " "
+                    echo "  Nodejs "$tgta" for Armv6 does not exist"
+                    echo "  so cannot be installed."
+                    echo "  There are no known later Nodejs builds for 32 bit systems."
+                    echo " "
+                    echo "  Node-RED may still work with nodejs v22."
+                    echo " "
+                    echo "************************************************************"
+                    exit 1
                 fi
             else
                 echo "Installing nodejs $NODE_VERSION" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 # clean out old nodejs stuff
                 npv=$(npm -v 2>/dev/null | head -n 1 | cut -d "." -f1)
-                $SUDO apt-mark manual pt-miniscreen
                 $SUDO apt remove -y nodejs nodejs-legacy npm 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                $SUDO dpkg -r nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                $SUDO dpkg -r node 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                $SUDO dpkg -rq nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                $SUDO dpkg -rq node 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                $SUDO dpkg -rq nsolid 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /opt/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /usr/local/lib/nodejs* 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -f /usr/local/bin/node* 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
@@ -498,7 +710,7 @@ case $yn in
 
                 # block debian nodejs install
                 echo "Package: nodejs" | $SUDO tee /etc/apt/preferences.d/nodejs.pref >>/dev/null
-                echo "Pin: release a=stable-security" | $SUDO tee -a /etc/apt/preferences.d/nodejs.pref >>/dev/null
+                echo "Pin: release a=stable" | $SUDO tee -a /etc/apt/preferences.d/nodejs.pref >>/dev/null
                 echo "Pin-Priority: -1" | $SUDO tee -a /etc/apt/preferences.d/nodejs.pref >>/dev/null
 
                 # use the official script to install for other debian platforms
@@ -508,9 +720,9 @@ case $yn in
                 # curl -sSL https://deb.nodesource.com/setup_$NODE_VERSION.x | $SUDOE bash - 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_VERSION.x nodistro main" | $SUDOE tee -a /etc/apt/sources.list.d/nodesource.list >>/dev/null
                 $SUDO apt-get update 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                if $SUDO apt install -y nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
-                nov2=$(dpkg -s nodejs | grep Version | cut -d ' ' -f 2)
-                echo -ne "  Install Node $nov2   $CHAR"
+                if $SUDO apt install -y --reinstall nodejs/nodistro 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
+                nov2=$(node -v)
+                echo -ne "  Install Node $nov2               $CHAR"
                 # echo -ne "  Install Node.js $NODE_VERSION LTS              $CHAR"
             fi
         fi
@@ -527,10 +739,9 @@ case $yn in
         if [[ "$rc" == "" ]]; then
             echo -ne "   $nov   Npm $npv\r\n"
         else
-            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
+            echo -ne "\b$CROSS   Bad install:  Node.js $nov  Npm $npv - Exit\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
             exit 2
         fi
-        if [ "$EUID" == "0" ]; then npm config set unsafe-perm true &>/dev/null; fi
 
         # clean up the npm cache and node-gyp
         if [[ "$NUPG" == "$TICK" ]]; then
@@ -554,10 +765,10 @@ case $yn in
         fi
 
         if [[ "$GLOBAL" == "true" ]]; then
-            $SUDO npm i -g --unsafe-perm --no-progress --no-update-notifier --no-audit --no-fund --loglevel=error node-red@"$NODERED_VERSION_SELECTION" 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; nri=${PIPESTATUS[0]}
+            $SUDO npm i -g --no-progress --no-update-notifier --no-audit --no-fund --loglevel=error node-red@"$NODERED_VERSION_SELECTION" 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; nri=${PIPESTATUS[0]}
             if [[ $nri -eq 0 ]]; then CHAR=$TICK; else CHAR=$CROSS; fi
         else
-            npm i -g --unsafe-perm --no-progress --no-update-notifier --no-audit --no-fund --loglevel=error node-red@"$NODERED_VERSION_SELECTION" 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; nri=${PIPESTATUS[0]}
+            npm i -g --no-progress --no-update-notifier --no-audit --no-fund --loglevel=error node-red@"$NODERED_VERSION_SELECTION" 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; nri=${PIPESTATUS[0]}
             if [[ $nri -eq 0 ]]; then CHAR=$TICK; else CHAR=$CROSS; fi
         fi
         nrv=$(npm -g --no-progress --no-update-notifier --no-audit --no-fund --loglevel=error ls node-red | grep node-red | cut -d '@' -f 2 | $SUDO tee -a /var/log/nodered-install.log) >>/dev/null 2>&1
@@ -586,7 +797,7 @@ case $yn in
             fi
             CHAR="-"
             if [[ $GLOBALNODES != " " ]]; then
-                if npm i --unsafe-perm --save --no-progress --no-update-notifier --no-audit --no-fund $GLOBALNODES 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
+                if npm i --save --no-progress --no-update-notifier --no-audit --no-fund $GLOBALNODES 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
             fi
             echo -ne "  Move global nodes to local          $CHAR\r\n"
 
@@ -610,7 +821,7 @@ case $yn in
             CHAR="-"
             if [[ ! -z $EXTRANODES ]]; then
                 echo "Installing extra nodes: $EXTRANODES :" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                if npm i --unsafe-perm --save --no-progress --no-update-notifier --no-audit --no-fund $EXTRANODES 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
+                if npm i --save --no-progress --no-update-notifier --no-audit --no-fund $EXTRANODES 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then CHAR=$TICK; else CHAR=$CROSS; fi
             fi
             echo -ne "  Install extra Pi nodes              $CHAR\r\n"
 
@@ -662,6 +873,8 @@ case $yn in
             $SUDO sed -i 's#=512#='$mem'#;' ${SYSTEMDFILE}.temp
             $SUDO sed -i 's#^User=.*#User='$NODERED_USER'#;s#^Group=.*#Group='$NODERED_GROUP'#;s#^WorkingDirectory=.*#WorkingDirectory='$NODERED_HOME'#;s#^EnvironmentFile=-.*#EnvironmentFile=-'$NODERED_HOME'/.node-red/environment#;' ${SYSTEMDFILE}.temp
 
+            grep -sq XDG_RUNTIME_DIR $NODERED_HOME/.node-red/environment || echo XDG_RUNTIME_DIR=/run/user/$UID >> $NODERED_HOME/.node-red/environment
+
             if test -f "$SYSTEMDFILE"; then
                 # there's already a systemd script
                 EXISTING_FILE=$(md5sum $SYSTEMDFILE | awk '$1 "${SYSTEMDFILE}" {print $1}');
@@ -671,7 +884,7 @@ case $yn in
                 then
                     : # silent procedure
                 else
-                    echo "Customized systemd script found @ $SYSTEMDFILE. To prevent loss of modifications, we'll not recreate the systemd script." | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    echo "Customized systemd script found @ $SYSTEMDFILE. To prevent loss of modifications, we will not recreate the systemd script." | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     echo "If you want the installer to recreate the systemd script, please delete or rename the current script & re-run the installer." | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     CHAR="-   Skipped - existing script is customized."
                 fi
@@ -711,11 +924,16 @@ case $yn in
             FAM=$(cat /etc/issue | cut -d ' ' -f 1)
             ISS=$(cat /etc/issue | cut -d '/' -f 2 | cut -d ' ' -f 2)
             if [[ "$FAM" == *"bian" ]]; then
-                if (($ISS > 11)); then
+                PT_GPIO_DEP=""
+                if is_pitop; then PT_GPIO_DEP=$(apt-cache rdepends --installed python3-rpi.gpio 2>/dev/null | grep -E "^ +(pt-|pi-top|python3-pitop)"); fi
+                if [ -n "$PT_GPIO_DEP" ]; then
+                    echo "pi-top packages depend on python3-rpi.gpio - not replacing it:$PT_GPIO_DEP" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                elif [ $ISS -gt 11 ] && [ "$DIETPI" != "y" ]; then
                     echo "Replace old rpi.gpio with lgpio" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     $SUDO apt purge -y python3-rpi.gpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                    $SUDO apt install -y python3-pip 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-                    $SUDO pip3 install --break-system-packages rpi-lgpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    # $SUDO apt install -y python3-pip 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    # $SUDO pip3 install --break-system-packages rpi-lgpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    $SUDO apt install -y python3-rpi-lgpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 else
                     echo "Leaving old rpi.gpio" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     $SUDO apt install -y python3-rpi.gpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
@@ -764,11 +982,11 @@ case $yn in
         fi
         if [ ! -f $file ]; then
             echo " "
-        elif ! diff -q /usr/lib/node_modules/node-red/settings.js $file &>/dev/null 2>&1 ; then
+        elif ! diff -q -w --suppress-common-lines /usr/lib/node_modules/node-red/settings.js $file &>/dev/null 2>&1 ; then
             echo " "
             echo "Just FYI : Your settings.js file is different from the latest defaults."
             echo "You may wish to run"
-            echo "   diff -y --suppress-common-lines /usr/lib/node_modules/node-red/settings.js $file"
+            echo "   diff -y -w --suppress-common-lines /usr/lib/node_modules/node-red/settings.js $file"
             echo "to compare them and see what the latest options are."
             echo " "
         fi
@@ -796,16 +1014,16 @@ case $yn in
             echo " "
             echo "      node-red admin init"
             echo " "
-            echo "  - After running Node-RED for the first time, change the ownership of the settings"
-            echo "    file to 'root' to prevent unauthorised changes:"
-            echo " "
-            echo "      sudo chown root:root ~/.node-red/settings.js"
-            echo " "
-        elif ! [[ $(stat --format '%G' ~/.node-red/settings.js) = "root" ]]; then
-            echo "  - Change the ownership of its settings file to 'root' to prevent unauthorised changes:"
-            echo ""
-            echo "      sudo chown root:root ~/.node-red/settings.js"
-            echo " "
+            # echo "  - After running Node-RED for the first time, change the ownership of the settings"
+            # echo "    file to 'root' to prevent unauthorised changes:"
+            # echo " "
+            # echo "      sudo chown root:root ~/.node-red/settings.js"
+            # echo " "
+        # elif ! [[ $(stat --format '%G' ~/.node-red/settings.js) = "root" ]]; then
+        #     echo "  - Change the ownership of its settings file to 'root' to prevent unauthorised changes:"
+        #     echo ""
+        #     echo "      sudo chown root:root ~/.node-red/settings.js"
+        #     echo " "
         fi
         if [ "$EUID" == "0" ]; then
             echo "  - Do not run Node-RED as root or an administraive account"
@@ -821,7 +1039,7 @@ case $yn in
                 export HOSTIP=`hostname -I | cut -d ' ' -f 1`
                 $SUDO chown -Rf $NODERED_USER:$NODERED_GROUP $NODERED_HOME/.node-red 2>&1 >>/dev/null
                 $SUDOU /usr/bin/node-red admin init
-                $SUDO chown 0:0 $file
+                # $SUDO chown 0:0 $file
                 ;;
                 [Nn]* )
                 echo "Settings not initialized."
@@ -832,7 +1050,7 @@ case $yn in
                 # exit 1
                 $SUDO chown -Rf $NODERED_USER:$NODERED_GROUP $NODERED_HOME/.node-red/ 2>&1 >>/dev/null
                 $SUDOU /usr/bin/node-red admin init
-                $SUDO chown 0:0 $file
+                # $SUDO chown 0:0 $file
                 ;;
             esac
         fi
@@ -860,61 +1078,5 @@ exit 1
 fi
 fi
 
-# Vor dem apt remove/autoremove
-echo -ne "  Marking PT dependencies               \r"
-$SUDO apt-mark manual pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
-if [ $? -eq 0 ]; then CHAR=$TICK; else CHAR=$CROSS; fi
-echo -ne "  Marking PT dependencies               $CHAR\r\n"
-
-# Am Ende des Skripts
-echo -ne '  Re-enabling PT-Miniscreen            \r'
-if $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
-   $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
-   $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
-    CHAR=$TICK
-else
-    CHAR=$CROSS
-fi
-echo -ne "  Re-enabling PT-Miniscreen            $CHAR\r\n"
-
-echo -ne '  Installing PT device support          \r'
-spinner=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
-spin() {
-    while true; do
-        for i in "${spinner[@]}"; do
-            echo -ne "\r  Installing PT device support    $i "
-            sleep 0.2
-        done
-    done
-}
-
-# Start the spinner in background
-spin &
-SPIN_PID=$!
-
-# Trap Ctrl+C and kill the spinner
-trap 'kill -9 $SPIN_PID 2>/dev/null || true' $(seq 0 15)
-
-if $SUDO apt install -y pt-device-support \
-   pt-os \
-   pt-os-desktop \
-   pt-os-ui-mods \
-   pt-os-web-portal \
-   pt-os-web-portal-desktop \
-   pt-os-icon-theme \
-   python3-pitop-full \
-   pi-top-usb-setup \
-   pt-os-user-libs \
-   2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
-   $SUDO apt install --reinstall -y pt-miniscreen pt-touchscreen pi-topd python3-pitop-display python3-pitop-core python3-pitop 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
-   $SUDO systemctl enable pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null && \
-   $SUDO systemctl start pt-miniscreen 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null; then
-    CHAR=$TICK
-else
-    CHAR=$CROSS
-fi
-
-# Kill the spinner - ignore errors if process is already gone
-kill -9 $SPIN_PID 2>/dev/null || true
-
-echo -ne "\r  Installing PT device support          $CHAR\r\n"
+# pi-top Pakete/Dienste wiederherstellen (laeuft sonst per EXIT-Trap)
+pt_restore
