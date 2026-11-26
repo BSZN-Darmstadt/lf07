@@ -519,7 +519,7 @@ case $yn in
             NODE_VERSION="12"
         fi
 
-        if [[ "$nv" -lt 20 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
+        if [[ "$nv" -lt 22 && "$nv" -ne 0  && "$nrv" != 1 ]]; then
             if [[ "$NODE_VERSION" == "" ]]; then
                 echo "Detected Node.js $nv - updating to Node.js 22 LTS" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 NODE_VERSION="22"
@@ -690,9 +690,13 @@ case $yn in
                 echo "Installing nodejs $NODE_VERSION" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 # clean out old nodejs stuff
                 npv=$(npm -v 2>/dev/null | head -n 1 | cut -d "." -f1)
+                if is_pitop; then
+                    echo "pi-top: keep nodejs package (novnc/pt-web-vnc/pt-os-web-portal depend on it), upgrading in place" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                else
                 $SUDO apt remove -y nodejs nodejs-legacy npm 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO dpkg -rq nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO dpkg -rq node 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                fi
                 $SUDO dpkg -rq nsolid 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /opt/nodejs 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /usr/local/lib/nodejs* 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
@@ -701,7 +705,7 @@ case $yn in
                 if [ "$npv" = "1" ]; then
                     $SUDO rm -rf /usr/local/lib/node_modules/node-red* /usr/lib/node_modules/node-red* 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 fi
-                $SUDO apt -y autoremove 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                is_pitop || $SUDO apt -y autoremove 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /etc/apt/sources.list.d/nodesource.list 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 $SUDO rm -rf /etc/apt/keyrings/nodesource.gpg 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                 echo -ne "  Remove old version of Node.js       \033[1;32m\u2714\033[0m   $nv2\r\n"
