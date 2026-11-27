@@ -424,7 +424,7 @@ echo Node-RED update script for : $NODERED_USER@`hostname`
 echo " "
 echo "******************************************"
 echo "*   Node-RED Installer by BSZN (pi-top)  *"
-echo "*            Version 2.1.0               *"
+echo "*            Version 2.1.1               *"
 echo "******************************************"
 echo " "
 echo "This script checks the version of node.js installed is 16 or greater. It will try to"
