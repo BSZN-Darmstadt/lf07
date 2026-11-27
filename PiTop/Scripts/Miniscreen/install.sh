@@ -931,7 +931,25 @@ case $yn in
                 PT_GPIO_DEP=""
                 if is_pitop; then PT_GPIO_DEP=$(apt-cache rdepends --installed python3-rpi.gpio 2>/dev/null | grep -E "^ +(pt-|pi-top|python3-pitop)"); fi
                 if [ -n "$PT_GPIO_DEP" ]; then
-                    echo "pi-top packages depend on python3-rpi.gpio - not replacing it:$PT_GPIO_DEP" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    # pi-top haengt versioniert an python3-rpi.gpio (>=0.7,<1.0). Das alte RPi.GPIO 0.7.1
+                    # kann unter aktuellen Kerneln keine Flanken erkennen ("Failed to add edge detection"),
+                    # damit funktioniert der rpi-gpio in Node nicht. python3-rpi-lgpio per apt wuerde den
+                    # pi-top Stack entfernen. Deshalb rpi-lgpio (RPi.GPIO-kompatibel) nur fuer Node-RED
+                    # in ein eigenes Verzeichnis legen und per PYTHONPATH einbinden.
+                    echo "pi-top packages depend on python3-rpi.gpio - keeping it, adding rpi-lgpio for Node-RED only:$PT_GPIO_DEP" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    PT_LGPIO_DIR=/opt/nodered-rpi-lgpio
+                    $SUDO apt install -y python3-lgpio python3-pip 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    $SUDO rm -rf $PT_LGPIO_DIR
+                    $SUDO python3 -m pip install --no-deps --break-system-packages --target $PT_LGPIO_DIR rpi-lgpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    ENVF=$NODERED_HOME/.node-red/environment
+                    $SUDO sed -i '/^PYTHONPATH=/d' $ENVF 2>/dev/null
+                    echo "PYTHONPATH=$PT_LGPIO_DIR" | $SUDO tee -a $ENVF >>/dev/null
+                    $SUDO chown $NODERED_USER:$NODERED_GROUP $ENVF
+                    if PYTHONPATH=$PT_LGPIO_DIR python3 -c "import RPi.GPIO as G; assert G.__file__.startswith('$PT_LGPIO_DIR')" 2>/dev/null; then
+                        echo "rpi-lgpio for Node-RED OK" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    else
+                        echo "rpi-lgpio for Node-RED could NOT be verified" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
+                    fi
                 elif [ $ISS -gt 11 ] && [ "$DIETPI" != "y" ]; then
                     echo "Replace old rpi.gpio with lgpio" | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
                     $SUDO apt purge -y python3-rpi.gpio 2>&1 | $SUDO tee -a /var/log/nodered-install.log >>/dev/null
